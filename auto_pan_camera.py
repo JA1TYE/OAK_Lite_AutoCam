@@ -6,6 +6,7 @@ import cv2
 import depthai as dai
 import numpy as np
 import math
+import pyvirtualcam
 from enum import Enum
 
 class MoveState(Enum):
@@ -13,7 +14,7 @@ class MoveState(Enum):
     MOVE = 1
 
 class frameMover:
-    def __init__(self,speed = 100,moveThresh = 100):
+    def __init__(self,speed = 50,moveThresh = 100):
         self.state = MoveState.WAIT
         self.currentPos = [0,0]
         self.targetPos = [0,0]
@@ -23,7 +24,7 @@ class frameMover:
         self.moveThresh = moveThresh
 
     def move(self,pos):
-        print("Move:",self.state,pos,self.targetPos,self.currentPos,self.xSpeed,self.ySpeed)
+        #print("Move:",self.state,pos,self.targetPos,self.currentPos,self.xSpeed,self.ySpeed)
         if self.state == MoveState.WAIT:
             dist = math.dist(pos, self.currentPos)
             if dist > self.moveThresh:
@@ -58,7 +59,7 @@ class frameMover:
     
 
 class frameZoomer:
-    def __init__(self,speed = 0.001,zoomThresh = 1.05):
+    def __init__(self,speed = 0.005,zoomThresh = 1.05):
         self.state = MoveState.WAIT
         self.currentSize = [1280,720]
         self.currentZoomRatio = 1.0
@@ -68,7 +69,7 @@ class frameZoomer:
         self.zoomThresh = zoomThresh
 
     def zoom(self,size):
-        print("Zoom:",self.state,size,self.targetSize,self.currentSize)
+        #print("Zoom:",self.state,size,self.targetSize,self.currentSize)
         if self.state == MoveState.WAIT:
             if size[0]/self.currentSize[0] > self.zoomThresh:
                 self.targetSize = size
@@ -115,7 +116,7 @@ class imageCropper:
         cropPos = self.getFrameCenterPos(cropSize, centroid)
         targetRect = self.convCenterSizeToRect(cropPos,cropSize)
 
-        print(targetRect)
+        #print(targetRect)
         resized = np.zeros((outXSize,outYSize))
         resized = cv2.resize(inFrame[targetRect[1]:targetRect[3],targetRect[0]:targetRect[2]:],dsize=(self.outXSize,self.outYSize))
         return resized
@@ -245,7 +246,8 @@ nn.out.link(nnOut.input)
 controlIn.out.link(camRgb.inputControl)
 
 # Connect to device and start pipeline
-with dai.Device(pipeline) as device:
+with dai.Device(pipeline) as device, pyvirtualcam.Camera(width=1280, height=720, fps=15,fmt=pyvirtualcam.PixelFormat.BGR) as cam:
+    print(f'Using virtual camera: {cam.device}')
 
     # Output queues will be used to get the frames and nn data from the outputs defined above
     qVideo = device.getOutputQueue(name="video", maxSize=4, blocking=False)
@@ -293,9 +295,11 @@ with dai.Device(pipeline) as device:
         resized = cropper.cropFrame(frame,cropROIs[0])
         # Show the frame
         cv2.imshow(name, resized)
+        cam.send(resized)
+        cam.sleep_until_next_frame()
 
     cv2.namedWindow("video", cv2.WINDOW_NORMAL)
-    cv2.resizeWindow("video", outXSize, outYSize)
+    cv2.resizeWindow("video", outXSize//4, outYSize//4)
     print("Resize video window with mouse drag!")
 
     while True:
