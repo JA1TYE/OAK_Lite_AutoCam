@@ -14,7 +14,7 @@ class MoveState(Enum):
     MOVE = 1
 
 class frameMover:
-    def __init__(self,speed = 50,moveThresh = 100):
+    def __init__(self,speed = 10,moveThresh = 200,frameMaxSize = (4192,3120)):
         self.state = MoveState.WAIT
         self.currentPos = [0,0]
         self.targetPos = [0,0]
@@ -22,9 +22,10 @@ class frameMover:
         self.ySpeed = 0.0
         self.xSpeed = 0.0
         self.moveThresh = moveThresh
+        self.frameMaxSize = frameMaxSize
 
     def move(self,pos):
-        #print("Move:",self.state,pos,self.targetPos,self.currentPos,self.xSpeed,self.ySpeed)
+        print("Move:",self.state,pos,self.targetPos,self.currentPos,self.xSpeed,self.ySpeed)
         if self.state == MoveState.WAIT:
             dist = math.dist(pos, self.currentPos)
             if dist > self.moveThresh:
@@ -34,10 +35,10 @@ class frameMover:
                 self.state = MoveState.MOVE
         elif self.state == MoveState.MOVE:
             diffTarget = math.dist(pos, self.targetPos)
-            if diffTarget > self.moveThresh * 5:
+            if diffTarget > self.moveThresh:
                 self.targetPos = pos
-                self.xSpeed = (self.targetPos[0] - self.currentPos[0])/self.speed
-                self.ySpeed = (self.targetPos[1] - self.currentPos[1])/self.speed
+            self.xSpeed = (self.targetPos[0] - self.currentPos[0])/self.speed
+            self.ySpeed = (self.targetPos[1] - self.currentPos[1])/self.speed
 
             xPos = self.currentPos[0] + self.xSpeed + 0.5
             yPos = self.currentPos[1] + self.ySpeed + 0.5
@@ -46,10 +47,17 @@ class frameMover:
                 (xPos < self.targetPos[0] and self.currentPos[0] >= self.targetPos[0]):
                 xPos = self.targetPos[0]             
                 self.xSpeed = 0.0            
+            if xPos >= self.frameMaxSize[0]:
+                xPos = self.frameMaxSize[0]
+                self.xSpeed = 0.0
             if (yPos > self.targetPos[1] and self.currentPos[1] <= self.targetPos[1]) or\
                 (yPos < self.targetPos[1] and self.currentPos[1] >= self.targetPos[1]):
                 yPos = self.targetPos[1]            
                 self.ySpeed = 0.0 
+            if yPos >= self.frameMaxSize[1]:
+                yPos = self.frameMaxSize[1]
+                self.ySpeed = 0.0
+
             if self.xSpeed == 0.0 and self.ySpeed == 0.0:
                 self.state = MoveState.WAIT 
             self.currentPos[0] = xPos
