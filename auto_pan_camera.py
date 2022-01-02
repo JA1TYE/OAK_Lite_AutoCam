@@ -14,91 +14,20 @@ class MoveState(Enum):
     MOVE = 1
 
 class frameMover:
-    def __init__(self,speed = 10,moveThresh = 200,frameMaxSize = (4192,3120)):
-        self.state = MoveState.WAIT
-        self.currentPos = [0,0]
-        self.targetPos = [0,0]
-        self.speed = speed
-        self.ySpeed = 0.0
-        self.xSpeed = 0.0
-        self.moveThresh = moveThresh
-        self.frameMaxSize = frameMaxSize
+    def __init__(self,gain = 0.1):
+        self.gain = gain
 
-    def move(self,pos):
-        print("Move:",self.state,pos,self.targetPos,self.currentPos,self.xSpeed,self.ySpeed)
-        if self.state == MoveState.WAIT:
-            dist = math.dist(pos, self.currentPos)
-            if dist > self.moveThresh:
-                self.targetPos = pos
-                self.xSpeed = (self.targetPos[0] - self.currentPos[0])/self.speed
-                self.ySpeed = (self.targetPos[1] - self.currentPos[1])/self.speed
-                self.state = MoveState.MOVE
-        elif self.state == MoveState.MOVE:
-            diffTarget = math.dist(pos, self.targetPos)
-            if diffTarget > self.moveThresh:
-                self.targetPos = pos
-            self.xSpeed = (self.targetPos[0] - self.currentPos[0])/self.speed
-            self.ySpeed = (self.targetPos[1] - self.currentPos[1])/self.speed
-
-            xPos = self.currentPos[0] + self.xSpeed + 0.5
-            yPos = self.currentPos[1] + self.ySpeed + 0.5
-
-            if (xPos > self.targetPos[0] and self.currentPos[0] <= self.targetPos[0]) or\
-                (xPos < self.targetPos[0] and self.currentPos[0] >= self.targetPos[0]):
-                xPos = self.targetPos[0]             
-                self.xSpeed = 0.0            
-            if xPos >= self.frameMaxSize[0]:
-                xPos = self.frameMaxSize[0]
-                self.xSpeed = 0.0
-            if (yPos > self.targetPos[1] and self.currentPos[1] <= self.targetPos[1]) or\
-                (yPos < self.targetPos[1] and self.currentPos[1] >= self.targetPos[1]):
-                yPos = self.targetPos[1]            
-                self.ySpeed = 0.0 
-            if yPos >= self.frameMaxSize[1]:
-                yPos = self.frameMaxSize[1]
-                self.ySpeed = 0.0
-
-            if self.xSpeed == 0.0 and self.ySpeed == 0.0:
-                self.state = MoveState.WAIT 
-            self.currentPos[0] = xPos
-            self.currentPos[1] = yPos
-        
-        return (int(self.currentPos[0]),int(self.currentPos[1]))
-    
+    def getMoveSpeed(self,targetPos,currentPos):
+        xSpeed = (targetPos[0] - currentPos[0])*self.gain        
+        ySpeed = (targetPos[1] - currentPos[1])*self.gain
+        return(xSpeed,ySpeed)
 
 class frameZoomer:
-    def __init__(self,speed = 0.005,zoomThresh = 1.05):
-        self.state = MoveState.WAIT
-        self.currentSize = [1280,720]
-        self.currentZoomRatio = 1.0
-        self.targetSize = [0,0]
-        self.zoomSign = -1
-        self.speed = speed
-        self.zoomThresh = zoomThresh
+    def __init__(self,gain = 0.5):
+        self.gain = gain
 
-    def zoom(self,size):
-        #print("Zoom:",self.state,size,self.targetSize,self.currentSize)
-        if self.state == MoveState.WAIT:
-            if size[0]/self.currentSize[0] > self.zoomThresh:
-                self.targetSize = size
-                self.zoomSign = +1
-                self.state = MoveState.MOVE
-            elif self.currentSize[0]/size[0] > self.zoomThresh:
-                self.targetSize = size
-                self.zoomSign = -1
-                self.state = MoveState.MOVE
-        elif self.state == MoveState.MOVE:
-            xSize = self.currentSize[0] * (1 + self.zoomSign * self.speed)
-            ySize = self.currentSize[1] * (1 + self.zoomSign * self.speed)
-            if (self.currentSize[0] > self.targetSize[0] and xSize <= self.targetSize[0]) or\
-                 (self.currentSize[0] < self.targetSize[0] and xSize >= self.targetSize[0]):
-                self.currentSize[0] = self.targetSize[0]
-                self.currentSize[1] = self.targetSize[1]
-                self.state = MoveState.WAIT
-            else:
-                self.currentSize[0] = xSize
-                self.currentSize[1] = ySize
-        return (int(self.currentSize[0]),int(self.currentSize[1]))        
+    def getZoomSpeed(self,targetSize,currentSize):
+        return 1.0 + ((targetSize[0] / currentSize[0]) - 1.0) * self.gain
 
 class imageCropper:
     def __init__(self,inXSize,inYSize,outXSize,outYSize,minXSize = 640,minYSize = 360,xMarginRatio=0.05,yMarginRatio=0.05):
@@ -111,30 +40,52 @@ class imageCropper:
         self.xMarginRatio = xMarginRatio
         self.yMarginRatio = yMarginRatio
         self.outXYRatio = self.outXSize / self.outYSize
+        self.targetPos = [0,0]
+        self.targetSize = [outXSize,outYSize]
+        self.currentPos = [inXSize//2,inYSize//2]
+        self.currentSize = [outXSize,outYSize]
         self.mover = frameMover()
         self.zoomer = frameZoomer()
 
     def cropFrame(self,inFrame,bbox):
         centroid = self.getBboxCentroid(bbox)
-        centroid = self.mover.move(centroid)
-
         cropSize = self.getCropFrameSize(bbox)
-        cropSize = self.zoomer.zoom(cropSize)
 
-        cropPos = self.getFrameCenterPos(cropSize, centroid)
-        targetRect = self.convCenterSizeToRect(cropPos,cropSize)
+        if self.checkPosUpdate(centroid) == True:
+            self.targetPos = centroid
+        
+        if self.checkSizeUpdate(cropSize) == True:
+            self.targetSize = cropSize
 
-        #print(targetRect)
+        moveSpeed = self.mover.getMoveSpeed(self.targetPos,self.currentPos)
+        zoomSpeed = self.zoomer.getZoomSpeed(self.targetSize,self.currentSize)
+
+        self.currentSize[0] = self.currentSize[0] * zoomSpeed
+        self.currentSize[1] = self.currentSize[1] * zoomSpeed 
+        self.currentPos[0] = self.currentPos[0] + moveSpeed[0]
+        self.currentPos[1] = self.currentPos[1] + moveSpeed[1]
+
+        self.currentPos = self.getFrameCenterPos(self.currentSize, self.currentPos)
+        targetRect = self.convCenterSizeToRect(self.currentSize,self.currentPos)
+
+        #print(self.currentSize,self.currentPos,targetRect)
         resized = np.zeros((outXSize,outYSize))
         resized = cv2.resize(inFrame[targetRect[1]:targetRect[3],targetRect[0]:targetRect[2]:],dsize=(self.outXSize,self.outYSize))
         return resized
 
-    def convCenterSizeToRect(self,pos,size):
-        targetXmin = int(pos[0] - (size[0]) // 2)
-        targetYmin = int(pos[1] - (size[1]) // 2)
-        targetXmax = int(targetXmin + size[0])
-        targetYmax = int(targetYmin + size[1])
-        return(targetXmin,targetYmin,targetXmax,targetYmax)
+    def checkPosUpdate(self,pos):
+        if math.dist(pos,self.targetPos) > 100:
+            return True
+        else:
+            return False
+
+    def checkSizeUpdate(self,size):
+        if self.targetSize[0]/size[0] > 1.05:
+            return True
+        elif size[0]/self.targetSize[0] > 1.05:
+            return True
+        else:
+            return False      
 
     def getBboxCentroid(self,bbox):
         return ((bbox[0]+bbox[2]) // 2,(bbox[1]+bbox[3]) // 2)
@@ -202,7 +153,14 @@ class imageCropper:
         if (retYPos + ((rectSize[1]+1) // 2)) > self.inYSize:
             retYPos = self.inYSize - (rectSize[1] + 1) // 2        
 
-        return(retXPos,retYPos)
+        return [retXPos,retYPos]
+
+    def convCenterSizeToRect(self,size,pos):
+        targetXmin = int(pos[0] - (size[0]) // 2)
+        targetYmin = int(pos[1] - (size[1]) // 2)
+        targetXmax = int(targetXmin + size[0])
+        targetYmax = int(targetYmin + size[1])
+        return(targetXmin,targetYmin,targetXmax,targetYmax)
 
 # Get argument first
 nnPath = str((Path(__file__).parent / Path('./models/mobilenet-ssd_openvino_2021.4_5shave.blob')).resolve().absolute())
