@@ -14,146 +14,181 @@ class MoveState(Enum):
     MOVE = 1
 
 class frameMover:
-    def __init__(self,gain = 0.1):
+    def __init__(self,maxSize,gain = 0.1):
         self.gain = gain
+        self.targetPos = [0,0]
+        self.currentPos = [0,0]
+        self.maxSize = maxSize
+        self.medianFilter = [0] * 30
+
+    def move(self,bbox,frameSize):
+        centroid = self.getCentroid(bbox)
+
+        if self.checkPosUpdate(centroid) == True:
+            self.targetPos = centroid
+
+        moveSpeed = self.getMoveSpeed(self.targetPos,self.currentPos)
+        
+        self.updatePos(moveSpeed,frameSize)
+        
+        return self.currentPos
+
+    def getCentroid(self,rect):
+        return ((rect[0]+rect[2]) / 2.0,(rect[1]+rect[3]) / 2.0)
 
     def getMoveSpeed(self,targetPos,currentPos):
         xSpeed = (targetPos[0] - currentPos[0])*self.gain        
         ySpeed = (targetPos[1] - currentPos[1])*self.gain
         return(xSpeed,ySpeed)
 
-class frameZoomer:
-    def __init__(self,gain = 0.5):
-        self.gain = gain
-
-    def getZoomSpeed(self,targetSize,currentSize):
-        return 1.0 + ((targetSize[0] / currentSize[0]) - 1.0) * self.gain
-
-class imageCropper:
-    def __init__(self,inXSize,inYSize,outXSize,outYSize,minXSize = 640,minYSize = 360,xMarginRatio=0.05,yMarginRatio=0.05):
-        self.inXSize = inXSize
-        self.inYSize = inYSize
-        self.outXSize = outXSize
-        self.outYSize = outYSize
-        self.minXSize = minXSize
-        self.minYSize = minYSize
-        self.xMarginRatio = xMarginRatio
-        self.yMarginRatio = yMarginRatio
-        self.outXYRatio = self.outXSize / self.outYSize
-        self.targetPos = [0,0]
-        self.targetSize = [outXSize,outYSize]
-        self.currentPos = [inXSize//2,inYSize//2]
-        self.currentSize = [outXSize,outYSize]
-        self.mover = frameMover()
-        self.zoomer = frameZoomer()
-
-    def cropFrame(self,inFrame,bbox):
-        centroid = self.getBboxCentroid(bbox)
-        cropSize = self.getCropFrameSize(bbox)
-
-        if self.checkPosUpdate(centroid) == True:
-            self.targetPos = centroid
-        
-        if self.checkSizeUpdate(cropSize) == True:
-            self.targetSize = cropSize
-
-        moveSpeed = self.mover.getMoveSpeed(self.targetPos,self.currentPos)
-        zoomSpeed = self.zoomer.getZoomSpeed(self.targetSize,self.currentSize)
-
-        self.currentSize[0] = self.currentSize[0] * zoomSpeed
-        self.currentSize[1] = self.currentSize[1] * zoomSpeed 
-        self.currentPos[0] = self.currentPos[0] + moveSpeed[0]
-        self.currentPos[1] = self.currentPos[1] + moveSpeed[1]
-
-        self.currentPos = self.getFrameCenterPos(self.currentSize, self.currentPos)
-        targetRect = self.convCenterSizeToRect(self.currentSize,self.currentPos)
-
-        #print(self.currentSize,self.currentPos,targetRect)
-        resized = np.zeros((outXSize,outYSize))
-        resized = cv2.resize(inFrame[targetRect[1]:targetRect[3],targetRect[0]:targetRect[2]:],dsize=(self.outXSize,self.outYSize))
-        return resized
-
     def checkPosUpdate(self,pos):
-        if math.dist(pos,self.targetPos) > 100:
+        dist = math.dist(pos,self.targetPos)
+
+        self.medianFilter.append(dist)
+        del self.medianFilter[0]
+
+        median = np.median(self.medianFilter)
+        
+        print("Pos:",median)
+        if median > 100:
             return True
         else:
             return False
 
-    def checkSizeUpdate(self,size):
-        if self.targetSize[0]/size[0] > 1.05:
-            return True
-        elif size[0]/self.targetSize[0] > 1.05:
-            return True
-        else:
-            return False      
-
-    def getBboxCentroid(self,bbox):
-        return ((bbox[0]+bbox[2]) // 2,(bbox[1]+bbox[3]) // 2)
-    
-    def getCropFrameSize(self,bbox):
-        boxXSize = bbox[2] - bbox[0]
-        boxYSize = bbox[3] - bbox[1]
-        (targetXSize,targetYSize) = self.getIncludingRect(boxXSize, boxYSize)
-        return (targetXSize,targetYSize)
-    
-    def getIncludingRect(self,xSize,ySize):
-        #Add a margin
-        xSize = xSize * (1.0 + self.xMarginRatio)
-        ySize = ySize * (1.0 + self.yMarginRatio)
-
-        boxXYRatio =  xSize/ ySize 
-        #if bbox has a wider aspect ratio than the target frame's one
-        if boxXYRatio > self.outXYRatio:
-            targetXSize = xSize
-            targetYSize = xSize / self.outXYRatio
-        else:
-            targetXSize = ySize * self.outXYRatio
-            targetYSize = ySize
-        
-        #Clip with max/min size
-        (targetXSize, targetYSize) = self.maxClip(targetXSize, targetYSize,self.inXSize,self.inYSize,self.outXYRatio)
-        (targetXSize, targetYSize) = self.minClip(targetXSize, targetYSize,self.minXSize,self.minYSize,self.outXYRatio)              
-        
-        return (int(targetXSize + 0.5),int(targetYSize + 0.5))
-
-    def maxClip(self,targetXSize,targetYSize,maxXSize,maxYSize,outXYRatio):
-        maxXYRatio = maxXSize / maxYSize
-        if targetXSize > maxXSize or targetYSize > maxYSize:
-            if outXYRatio > maxXYRatio:
-                targetXSize = maxXSize
-                targetYSize = maxXSize / outXYRatio
-            else:
-                targetXSize = maxYSize * outXYRatio 
-                targetYSize = maxYSize
-
-        return (targetXSize,targetYSize)
-
-    def minClip(self,targetXSize,targetYSize,minXSize,minYSize,outXYRatio):
-        minXYRatio = minXSize / minYSize
-        if targetXSize < minXSize or targetYSize < minYSize:
-            if outXYRatio < minXYRatio:
-                targetXSize = minXSize
-                targetYSize = maxXSize / outXYRatio
-            else:
-                targetXSize = minYSize * outXYRatio 
-                targetYSize = minYSize
-                       
-        return (targetXSize,targetYSize)   
-
-    def getFrameCenterPos(self,rectSize,centroidPos):
-        retXPos = centroidPos[0]
-        retYPos = centroidPos[1]
+    def getFrameCenterPos(self,rectSize,pos):
+        retXPos = pos[0]
+        retYPos = pos[1]
         if (retXPos - ((rectSize[0]+1) // 2)) < 0:
             retXPos = (rectSize[0] + 1) // 2
         if (retYPos - ((rectSize[1]+1) // 2)) < 0:
             retYPos = (rectSize[1] + 1) // 2
 
-        if (retXPos + ((rectSize[0]+1) // 2)) > self.inXSize:
-            retXPos = self.inXSize - (rectSize[0] + 1) // 2
-        if (retYPos + ((rectSize[1]+1) // 2)) > self.inYSize:
-            retYPos = self.inYSize - (rectSize[1] + 1) // 2        
+        if (retXPos + ((rectSize[0]+1) // 2)) > self.maxSize[0]:
+            retXPos = self.maxSize[0] - (rectSize[0] + 1) // 2
+        if (retYPos + ((rectSize[1]+1) // 2)) > self.maxSize[1]:
+            retYPos = self.maxSize[1] - (rectSize[1] + 1) // 2  
 
         return [retXPos,retYPos]
+
+    def updatePos(self,moveSpeed,frameSize):
+        self.currentPos[0] = self.currentPos[0] + moveSpeed[0]
+        self.currentPos[1] = self.currentPos[1] + moveSpeed[1]
+        
+        self.currentPos = self.getFrameCenterPos(frameSize, self.currentPos)
+
+
+class frameZoomer:
+    def __init__(self,maxSize,minSize,outXYRatio,gain,marginRatio):
+        self.gain = gain
+        self.marginRatio = marginRatio    
+        self.outXYRatio = outXYRatio
+        self.minSize = np.copy(minSize)
+        self.maxSize = maxSize
+        self.targetSize = np.copy(minSize)
+        self.currentSize = np.copy(minSize)
+        self.currentZoomRatio = 1.0
+        self.baseSize = self.minClip([(minSize[0] - 1),(minSize[1] - 1)], minSize, outXYRatio)
+        self.baseSize[0] = int(self.baseSize[0])
+        self.baseSize[1] = int(self.baseSize[1])
+        self.medianFilter = [1.0] * 30
+    def zoom(self,bbox):
+        cropSize = self.getCropFrameSize(bbox)
+
+        if self.checkSizeUpdate(cropSize) == True:
+            self.targetSize = cropSize
+        
+        zoomSpeed = self.getZoomSpeed(self.targetSize,self.currentSize)
+        self.updateSize(zoomSpeed)
+
+        return (self.currentSize[0],self.currentSize[1])
+
+    def checkSizeUpdate(self,size):
+        ratio = max(self.targetSize[0]/size[0],size[0]/self.targetSize[0])
+
+        self.medianFilter.append(ratio)
+        del self.medianFilter[0]
+
+        median = np.median(self.medianFilter)
+
+        print("Size:",median)
+        if median > 1.02:
+            return True
+        else:
+            return False      
+
+    def getCropFrameSize(self,bbox):
+        boxSize = [bbox[2] - bbox[0],bbox[3] - bbox[1]]
+        (targetXSize,targetYSize) = self.getIncludingRect(boxSize)
+        return (int(targetXSize + 0.5),int(targetYSize + 0.5))
+    
+    def getIncludingRect(self,size):
+        #Add a margin
+        xSize = size[0] * (1.0 + self.marginRatio[0])
+        ySize = size[1] * (1.0 + self.marginRatio[1])
+
+        boxXYRatio =  xSize / ySize 
+        targetSize = [0,0]
+        #if bbox has a wider aspect ratio than the target frame's one
+        if boxXYRatio > self.outXYRatio:
+            targetSize[0] = xSize
+            targetSize[1] = xSize / self.outXYRatio
+        else:
+            targetSize[0] = ySize * self.outXYRatio
+            targetSize[1] = ySize
+
+        #Clip with max/min size
+        (targetSize[0], targetSize[1]) = self.maxClip(targetSize,self.maxSize,self.outXYRatio)
+        (targetSize[0], targetSize[1]) = self.minClip(targetSize,self.minSize,self.outXYRatio)              
+        return targetSize
+
+    def maxClip(self,targetSize,maxSize,outXYRatio):
+        maxXYRatio = maxSize[0] / maxSize[1]
+        if targetSize[0] > maxSize[0] or targetSize[1] > maxSize[1]:
+            if outXYRatio > maxXYRatio:
+                targetSize[0] = maxSize[0]
+                targetSize[1] = maxSize[0] / outXYRatio
+            else:
+                targetSize[0] = maxSize[1] * outXYRatio 
+                targetSize[1] = maxSize[1]
+
+        return targetSize
+
+    def minClip(self,targetSize,minSize,outXYRatio):
+        minXYRatio = minSize[0] / minSize[1]
+        if targetSize[0] < minSize[0] or targetSize[1] < minSize[1]:
+            if outXYRatio < minXYRatio:
+                targetSize[0] = minSize[0]
+                targetSize[1] = minSize[0] / outXYRatio
+            else:
+                targetSize[0] = minSize[1] * outXYRatio 
+                targetSize[1] = minSize[1]
+                       
+        return targetSize   
+
+    def getZoomSpeed(self,targetSize,currentSize):
+        speed = 1.0 + ((targetSize[0] / currentSize[0]) - 1.0) * self.gain
+        return speed
+
+    def updateSize(self,zoomSpeed):
+        self.currentZoomRatio = self.currentZoomRatio * zoomSpeed
+        self.currentSize[0] = int(self.baseSize[0] * self.currentZoomRatio + 0.5)
+        self.currentSize[1] = int(self.baseSize[1] * self.currentZoomRatio + 0.5)
+
+class imageCropper:
+    def __init__(self,maxSize,minSize=[640,360],outSize=[1280,720],marginRatio=[0.05,0.05]):
+        self.marginRatio = marginRatio
+        self.mover = frameMover(maxSize)
+        self.outSize=outSize
+        self.zoomer = frameZoomer(maxSize,minSize,outSize[0]/outSize[1],gain=0.05,marginRatio=marginRatio)
+
+    def cropFrame(self,inFrame,bbox):
+        currentSize = self.zoomer.zoom(bbox)
+        currentPos = self.mover.move(bbox,currentSize)
+
+        targetRect = self.convCenterSizeToRect(currentSize,currentPos)
+        resized = np.zeros(self.outSize)
+        resized = cv2.resize(inFrame[targetRect[1]:targetRect[3],targetRect[0]:targetRect[2]:],dsize=self.outSize)
+        return resized
 
     def convCenterSizeToRect(self,size,pos):
         targetXmin = int(pos[0] - (size[0]) // 2)
@@ -240,7 +275,7 @@ with dai.Device(pipeline) as device, pyvirtualcam.Camera(width=1280, height=720,
     ctrl.setAutoExposureCompensation(5)
     controlQueue.send(ctrl)
 
-    cropper = imageCropper(camRgb.getVideoWidth(),camRgb.getVideoHeight(),1280,720)
+    cropper = imageCropper(camRgb.getVideoSize())
 
     # nn data, being the bounding box locations, are in <0..1> range - they need to be normalized with frame width/height
     def frameNorm(frameX,frameY, bbox):
