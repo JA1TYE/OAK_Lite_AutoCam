@@ -49,7 +49,6 @@ class frameMover:
 
         median = np.median(self.medianFilter)
         
-        print("Pos:",median)
         if median > 100:
             return True
         else:
@@ -110,7 +109,6 @@ class frameZoomer:
 
         median = np.median(self.medianFilter)
 
-        print("Size:",median)
         if median > 1.02:
             return True
         else:
